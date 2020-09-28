@@ -17,7 +17,6 @@ def get_images_by_subject(image_names):
             images_by_subject[image_name[:6]] = []
         images_by_subject[image_name[:6]].append(image_name)
 
-    print_images_by_subject_statistics(images_by_subject)
     return images_by_subject
 
 
@@ -54,6 +53,8 @@ if __name__ == "__main__":
     test_image_names = get_files_in_folder("C:/Users/Junbong/Desktop/FNA Data/all-patients/images_test")
 
     images_by_subject = get_images_by_subject(train_image_names + valid_image_names + test_image_names)
-    images_by_subject = get_images_by_subject(train_image_names)
-    images_by_subject = get_images_by_subject(valid_image_names)
-    images_by_subject = get_images_by_subject(test_image_names)
+    print_images_by_subject_statistics(images_by_subject)
+
+    # images_by_subject = get_images_by_subject(train_image_names)
+    # images_by_subject = get_images_by_subject(valid_image_names)
+    # images_by_subject = get_images_by_subject(test_image_names)

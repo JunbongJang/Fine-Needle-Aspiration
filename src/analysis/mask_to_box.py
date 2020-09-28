@@ -23,66 +23,34 @@ import PIL.ImageDraw as ImageDraw
 from skimage import morphology
 from scipy import ndimage
 
-def get_separate_regions(mask):
-    return skimage.measure.label(img_as_ubyte(mask), connectivity=2)
-
-
-def clean_mask(input_mask):
-
-    cleaned_mask = input_mask.copy()
-    
-    # fill hole
-    cleaned_mask = ndimage.morphology.binary_fill_holes(cleaned_mask, structure=np.ones((5,5))).astype(cleaned_mask.dtype)
-    cleaned_mask = cleaned_mask * 255
-
-    # Filter using contour area and remove small noise
-    # https://stackoverflow.com/questions/60033274/how-to-remove-small-object-in-image-with-python
-    cnts = cv2.findContours(cleaned_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    cnts = cnts[0] if len(cnts) == 2 else cnts[1]
-    for c in cnts:
-        area = cv2.contourArea(c)
-        perimeter = cv2.arcLength(c,False)
-        if area < 2000:
-            contour_cmap = (0,0,0)
-            cv2.drawContours(cleaned_mask, [c], -1, contour_cmap, -1)
-
-    return cleaned_mask
-
 
 def get_bounding_box_from_mask(mask, pixel_val):
-
     xmins = np.array([])
     ymins = np.array([])
     xmaxs = np.array([])
     ymaxs = np.array([])
     
-    
     nonbackground_indices_x = np.any(mask == pixel_val, axis=0)
     nonbackground_indices_y = np.any(mask == pixel_val, axis=1)
     nonzero_x_indices = np.where(nonbackground_indices_x)
     nonzero_y_indices = np.where(nonbackground_indices_y)
-    
+
+    # if the mask contains any object
     if np.asarray(nonzero_x_indices).shape[1] > 0 and np.asarray(nonzero_y_indices).shape[1] > 0:
-        # if the mask contains any object
-        # do regionprops
-        # for each regions
-            # get pixel val
-            # use pixel val to draw bounding box
         
-        mask_remapped = (mask == pixel_val).astype(np.uint8)
-        mask_regions = get_separate_regions(mask_remapped)
+        mask_remapped = (mask == pixel_val).astype(np.uint8)  # get certain label
+        mask_regions = skimage.measure.label(img_as_ubyte(mask_remapped), connectivity=2)  # get separate regions
         for region_pixel_val in np.unique(mask_regions):
             if region_pixel_val > 0: # ignore background pixels
-                # boolean array
+                # boolean array for localizing pixels from one region only
                 nonzero_x_boolean = np.any(mask_regions == region_pixel_val, axis=0)
                 nonzero_y_boolean = np.any(mask_regions == region_pixel_val, axis=1)
                 
-                # numerical indices only for true in boolean array
+                # numerical indices of value true in boolean array
                 nonzero_x_indices = np.where(nonzero_x_boolean)
                 nonzero_y_indices = np.where(nonzero_y_boolean)
                 
-                # remove small size boxes
-                #print(len(nonzero_x_indices[0]), len(nonzero_y_indices[0]))
+                # ignore small boxes
                 if len(nonzero_x_indices[0]) > 5 and len(nonzero_y_indices[0]) > 5:
                     xmin = float(np.min(nonzero_x_indices))
                     xmax = float(np.max(nonzero_x_indices))
@@ -96,7 +64,7 @@ def get_bounding_box_from_mask(mask, pixel_val):
                     xmaxs = np.append(xmaxs, xmax)
                     ymaxs = np.append(ymaxs, ymax)
     
-    # reshape row vector into nx1 column vector 
+    # reshape 1xn row vector into nx1 column vector
     xmins = np.reshape(xmins, (-1, 1)) 
     ymins = np.reshape(ymins, (-1, 1))
     xmaxs = np.reshape(xmaxs, (-1, 1))
@@ -107,9 +75,7 @@ def get_bounding_box_from_mask(mask, pixel_val):
     return bounding_boxes
                        
                        
-def draw_bounding_boxes_on_image(image, save_path, boxes,
-                                 color,
-                                 thickness=8):
+def draw_bounding_boxes_on_image(image, boxes, color, thickness=8):
     """Draws bounding boxes on image.
 
     Args:
@@ -129,16 +95,10 @@ def draw_bounding_boxes_on_image(image, save_path, boxes,
     for i in range(boxes_shape[0]):
         draw_bounding_box_on_image(image, boxes[i, 0], boxes[i, 1], boxes[i, 2],
                                 boxes[i, 3], color, thickness)
-    image.save(save_path)
+    return image
                        
                        
-def draw_bounding_box_on_image(image,
-                               ymin,
-                               xmin,
-                               ymax,
-                               xmax,
-                               color,
-                               thickness=4):
+def draw_bounding_box_on_image(image, ymin, xmin, ymax, xmax, color, thickness=4):
     """Adds a bounding box to an image.
 
     Bounding box coordinates can be specified in either absolute (pixel) or
@@ -175,6 +135,7 @@ def calculate_boxes_overlap_area(box1, box2):
 def vUNet_boxes(mask, a_threshold):
     # for vU-Net predictions
     # thresholding
+    mask_copy = mask.copy()
     mask_copy[mask_copy >= a_threshold] = 255
     mask_copy[mask_copy < a_threshold] = 0
     mask_copy = clean_mask(mask_copy)
@@ -182,11 +143,31 @@ def vUNet_boxes(mask, a_threshold):
     
     # crop edge because of edge effect of vU-Net
     mask_copy = mask_copy[30:, 30:]
-    img = Image.open(img_path)
-    width, height = img.size
-    img = img.crop((30,30,width,height))
+    mask_copy = np.pad(mask_copy, ((30,0), (30,0)), 'constant', constant_values=(0))
     
-    return get_bounding_box_from_mask(mask_copy, pixel_val = 255)  
+    return get_bounding_box_from_mask(mask_copy, pixel_val = 255)
+
+
+def clean_mask(input_mask):
+    cleaned_mask = input_mask.copy()
+
+    # fill hole
+    cleaned_mask = ndimage.morphology.binary_fill_holes(cleaned_mask, structure=np.ones((5, 5))).astype(
+        cleaned_mask.dtype)
+    cleaned_mask = cleaned_mask * 255
+
+    # Filter using contour area and remove small noise
+    # https://stackoverflow.com/questions/60033274/how-to-remove-small-object-in-image-with-python
+    cnts = cv2.findContours(cleaned_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+    for c in cnts:
+        area = cv2.contourArea(c)
+        perimeter = cv2.arcLength(c, False)
+        if area < 2000:
+            contour_cmap = (0, 0, 0)
+            cv2.drawContours(cleaned_mask, [c], -1, contour_cmap, -1)
+
+    return cleaned_mask
 
 
 def openImg(path):
@@ -196,40 +177,60 @@ def openImg(path):
     mask = np.asarray(mask.convert('L'))
     return mask.copy()
 
+
 if __name__ == "__main__":
     # get data path
-    ground_truth_mask_root_path = '../../TfResearch/object_detection/dataset_tools/assets/masks_test/'
-    vUnet_mask_root_path = '../../FNA/vUnet/average_hist/predict_wholeframe/all-patients/all-patients/' 
-    rcnn_box_root_path = '../../TfResearch/object_detection/generated/faster_rcnn_inception_boxes/'
-    img_root_path = '../../FNA/assets/all-patients/img/'
-    
+    base_path = '//research.wpi.edu/leelab/Junbong/'
+    ground_truth_mask_root_path = base_path + 'TfResearch/research/object_detection/dataset_tools/assets/masks_test/'
+    vUnet_mask_root_path = base_path + 'FNA/vUnet/average_hist/predict_wholeframe/all-patients/all-patients/'
+    img_root_path = base_path + 'FNA/assets/all-patients/img/'
+
+    faster_rcnn_boxes = np.load("../../generated/tf1_faster_boxes.npy", allow_pickle=True)
+
+    saved_ground_truth_boxes = {}
     mask_names = [file for file in os.listdir(ground_truth_mask_root_path) if file.endswith(".png")]
     for idx, filename in enumerate(mask_names):
-        #for a_threshold in [225,250]:
+        '''
+        get bounding box from vUNet and Faster Rcnn models, and ground truth mask.
+        overlay them all on top of the unstained raw image
+        '''
         a_threshold = 100
-        print(filename)
         
         ground_truth_mask_path = os.path.join(ground_truth_mask_root_path, filename)
-        vUnet_prediction_path = os.path.join(vUnet_mask_root_path, filename)
-        
+        #vUnet_prediction_path = os.path.join(vUnet_mask_root_path, filename)
         img_path = os.path.join(img_root_path, filename.replace('predict', ''))
-        save_path = os.path.join(vUnet_mask_root_path, '../boxes_threshold_'+str(a_threshold))
-        if os.path.isdir(save_path) is False:  
-            os.mkdir(save_path)
-        save_path = os.path.join(save_path, filename.replace('predict',''))
-        print(save_path)
         
+        # load images from paths
+        img = Image.open(img_path)
         ground_truth_mask_mask = openImg(ground_truth_mask_path)
-        vUnet_prediction_mask = openImg(vUnet_prediction_path)
-        
+        #vUnet_prediction_mask = openImg(vUnet_prediction_path)
+
+        # get boxes from image
         ground_truth_boxes = get_bounding_box_from_mask(ground_truth_mask_mask, pixel_val = 76)
-        vUNet_prediction_boxes = vUNet_boxes(vUnet_prediction_mask, a_threshold)
-        print(ground_truth_boxes.shape)
-        print(vUNet_prediction_boxes.shape)
+        #vUNet_prediction_boxes = vUNet_boxes(vUnet_prediction_mask, a_threshold)
+        faster_rcnn_boxes_filename = faster_rcnn_boxes.item()[filename]
+        faster_rcnn_boxes_filename[:,0] = faster_rcnn_boxes_filename[:,0] * 1944
+        faster_rcnn_boxes_filename[:,2] = faster_rcnn_boxes_filename[:,2] * 1944
+        faster_rcnn_boxes_filename[:,1] = faster_rcnn_boxes_filename[:,1] * 2592
+        faster_rcnn_boxes_filename[:,3] = faster_rcnn_boxes_filename[:,3] * 2592
         
-        total_boxes = vUNet_prediction_boxes
-        if total_boxes.shape[0] > 0:
-            draw_bounding_boxes_on_image(img, save_path, total_boxes, color='LimeGreen')
-        
+        # Save image with bounding box
+        # save_path = os.path.join(vUnet_mask_root_path, '../boxes_threshold_'+str(a_threshold))
+        save_base_path = base_path + 'FNA/evaluation/generated/overlaid_boxes/'
+        if os.path.isdir(save_base_path) is False:
+            os.mkdir(save_base_path)
+        save_path = os.path.join(save_base_path, filename.replace('predict',''))
+        print(save_path)
+
+        if ground_truth_boxes.shape[0] > 0:
+           boxed_image = draw_bounding_boxes_on_image(img, ground_truth_boxes, color='#9901ff')
+           boxed_image = draw_bounding_boxes_on_image(boxed_image, faster_rcnn_boxes_filename, color='#89ff29')
+           boxed_image.save(save_path)
+
+        saved_ground_truth_boxes[filename] = ground_truth_boxes
+
         print()
         print()
+
+    np.save(save_base_path + 'ground_truth_boxes.npy', saved_ground_truth_boxes)
+       
