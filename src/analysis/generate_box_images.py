@@ -178,6 +178,52 @@ def openImg(path):
     return mask.copy()
 
 
+def mask_to_box(save_base_path, mask_root_path, mask_names):
+    saved_boxes = {}
+    for idx, filename in enumerate(mask_names):
+        mask_path = os.path.join(mask_root_path, filename)
+        mask_image = openImg(mask_path)
+        saved_boxes[filename] = get_bounding_box_from_mask(mask_image, pixel_val = 76)
+
+    np.save(save_base_path + 'ground_truth_boxes.npy', saved_boxes)
+
+
+def overlay_boxes(save_base_path, mask_names, ground_truth_boxes, faster_rcnn_boxes):
+    '''
+        get bounding box from vUNet and Faster Rcnn models, and ground truth mask.
+        overlay them all on top of the unstained raw image
+    '''
+    for idx, filename in enumerate(mask_names):
+
+        img_path = os.path.join(img_root_path, filename.replace('predict', ''))
+        # a_threshold = 100
+        # vUnet_prediction_path = os.path.join(vUnet_mask_root_path, filename)
+        # vUnet_prediction_mask = openImg(vUnet_prediction_path)
+        # vUNet_prediction_boxes = vUNet_boxes(vUnet_prediction_mask, a_threshold)
+
+        img = Image.open(img_path)  # load images from paths
+        one_ground_truth_boxes = ground_truth_boxes.item()[filename]
+        
+        one_faster_rcnn_boxes = faster_rcnn_boxes.item()[filename]
+        one_faster_rcnn_boxes[:, 0], one_faster_rcnn_boxes[:, 2] = one_faster_rcnn_boxes[:,
+                                                                   0] * 1944, one_faster_rcnn_boxes[:, 2] * 1944
+        one_faster_rcnn_boxes[:, 1], one_faster_rcnn_boxes[:, 3] = one_faster_rcnn_boxes[:,
+                                                                   1] * 2592, one_faster_rcnn_boxes[:, 3] * 2592
+
+        # Save image with bounding box
+        save_path = os.path.join(save_base_path, filename.replace('predict', ''))
+        print(save_path, end='')
+
+        if one_ground_truth_boxes.shape[0] > 0:
+            combined_boxed_image = draw_bounding_boxes_on_image(img, one_ground_truth_boxes, color='#9901ff')
+            combined_boxed_image = draw_bounding_boxes_on_image(combined_boxed_image, one_faster_rcnn_boxes,
+                                                                color='#89ff29')
+            combined_boxed_image.save(save_path)
+            print(' ---- saved')
+        else:
+            print()
+
+
 if __name__ == "__main__":
     # get data path
     base_path = '//research.wpi.edu/leelab/Junbong/'
@@ -185,52 +231,19 @@ if __name__ == "__main__":
     vUnet_mask_root_path = base_path + 'FNA/vUnet/average_hist/predict_wholeframe/all-patients/all-patients/'
     img_root_path = base_path + 'FNA/assets/all-patients/img/'
 
-    faster_rcnn_boxes = np.load("../../generated/tf1_faster_boxes.npy", allow_pickle=True)
+    object_detection_type = 'stained_improved_faster_640'
+    faster_rcnn_boxes = np.load("../../generated/{}_boxes.npy".format(object_detection_type), allow_pickle=True)
+    ground_truth_boxes = np.load("../../generated/ground_truth_boxes.npy", allow_pickle=True)
 
-    saved_ground_truth_boxes = {}
-    mask_names = [file for file in os.listdir(ground_truth_mask_root_path) if file.endswith(".png")]
-    for idx, filename in enumerate(mask_names):
-        '''
-        get bounding box from vUNet and Faster Rcnn models, and ground truth mask.
-        overlay them all on top of the unstained raw image
-        '''
-        a_threshold = 100
-        
-        ground_truth_mask_path = os.path.join(ground_truth_mask_root_path, filename)
-        #vUnet_prediction_path = os.path.join(vUnet_mask_root_path, filename)
-        img_path = os.path.join(img_root_path, filename.replace('predict', ''))
-        
-        # load images from paths
-        img = Image.open(img_path)
-        ground_truth_mask_mask = openImg(ground_truth_mask_path)
-        #vUnet_prediction_mask = openImg(vUnet_prediction_path)
+    save_base_path = base_path + 'FNA/evaluation/generated/{}_boxes/'.format(object_detection_type)
+    if os.path.isdir(save_base_path) is False:
+        os.mkdir(save_base_path)
 
-        # get boxes from image
-        ground_truth_boxes = get_bounding_box_from_mask(ground_truth_mask_mask, pixel_val = 76)
-        #vUNet_prediction_boxes = vUNet_boxes(vUnet_prediction_mask, a_threshold)
-        faster_rcnn_boxes_filename = faster_rcnn_boxes.item()[filename]
-        faster_rcnn_boxes_filename[:,0] = faster_rcnn_boxes_filename[:,0] * 1944
-        faster_rcnn_boxes_filename[:,2] = faster_rcnn_boxes_filename[:,2] * 1944
-        faster_rcnn_boxes_filename[:,1] = faster_rcnn_boxes_filename[:,1] * 2592
-        faster_rcnn_boxes_filename[:,3] = faster_rcnn_boxes_filename[:,3] * 2592
-        
-        # Save image with bounding box
-        # save_path = os.path.join(vUnet_mask_root_path, '../boxes_threshold_'+str(a_threshold))
-        save_base_path = base_path + 'FNA/evaluation/generated/overlaid_boxes/'
-        if os.path.isdir(save_base_path) is False:
-            os.mkdir(save_base_path)
-        save_path = os.path.join(save_base_path, filename.replace('predict',''))
-        print(save_path)
 
-        if ground_truth_boxes.shape[0] > 0:
-           boxed_image = draw_bounding_boxes_on_image(img, ground_truth_boxes, color='#9901ff')
-           boxed_image = draw_bounding_boxes_on_image(boxed_image, faster_rcnn_boxes_filename, color='#89ff29')
-           boxed_image.save(save_path)
+    ground_truth_mask_names = [file for file in os.listdir(ground_truth_mask_root_path) if file.endswith(".png")]
+    # mask_to_box(save_base_path, ground_truth_mask_names)
+    overlay_boxes(save_base_path, ground_truth_mask_names, ground_truth_boxes, faster_rcnn_boxes)
 
-        saved_ground_truth_boxes[filename] = ground_truth_boxes
 
-        print()
-        print()
 
-    np.save(save_base_path + 'ground_truth_boxes.npy', saved_ground_truth_boxes)
        
